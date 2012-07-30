@@ -36,10 +36,12 @@ Ext.define('Ext.ux.chart.series.GaugeThreshold', {
     showValue: true,
 
     // place number-value to 
-    // 'c' - the center of the gauge (useful in case of donut type gauge) or
+    // 'bc' - the center of the gauge (useful in case of donut type gauge) or
     // 'tl' - top-left corner of the chart or
     // 'tr' - top-right corner of the chart
-    alignValue: 'c',
+    alignValue: 'bc',
+    
+    valueFormat: '{0}%',
 
     drawSeries: function () {
         var me = this,
@@ -65,9 +67,9 @@ Ext.define('Ext.ux.chart.series.GaugeThreshold', {
             gutterY = chart.maxGutter[1],
             cos = Math.cos,
             sin = Math.sin,
-            rendererAttributes, centerX, centerY, slice, slices, sprite, value,
+            rendererAttributes, centerX, centerY, slice, slices, sprite, value, text,
             item, ln, record, i, j, startAngle, endAngle, middleAngle, sliceLength, path,
-            p, spriteOptions, bbox, splitAngle, sliceA, sliceB;
+            p, spriteOptions, bbox, splitAngle, sliceA, sliceB, pos;
 
         Ext.apply(seriesStyle, me.style || {});
 
@@ -215,9 +217,9 @@ Ext.define('Ext.ux.chart.series.GaugeThreshold', {
                 hidden: false
             }, true);
         }
-        console.log('draw number value');
         if (me.showValue) {
             value = 123.434;
+            text = me.valueFormat ? Ext.String.format(me.valueFormat, value) : value;
             if (!me.numberSprite) {
                 spriteOptions = Ext.apply({
                     type: "text",
@@ -227,22 +229,55 @@ Ext.define('Ext.ux.chart.series.GaugeThreshold', {
                 me.numberSprite = me.chart.surface.add(spriteOptions);
             }
             //if this is a first-time calculation or chart was resized or text was changed - update font size
-            if (me.numberSprite.radius != me.radius || me.numberSprite.attr.text != value) {
-                fontSize = this.getFontSizeByValue(value, me.radius * +donut / 100, me.radius);
+            //todo: cache chart size and compare?
+            if (me.numberSprite.radius != me.radius || me.numberSprite.attr.text != text || me.alignValue != 'bc') {
+                fontSize = this.getFontSizeByValue(text, me.radius * +donut / 100, me.radius);
                 me.numberSprite.setAttributes({
                     hidden: false,
                     font: fontSize.size + 'px Arial',
-                    text: value,
-                    x: centerX,
-                    y: centerY - fontSize.height / 2,
+                    text: text,
                     'text-anchor': 'middle',
+                    'baseline-shift': 'sub',
                     value: value
                 }, true);
                 me.numberSprite.radius = me.radius;
+                me.numberSprite.fontSize = fontSize;
             }
+            pos = this.getValuePosition(me.numberSprite.fontSize, centerX, centerY);
+            me.numberSprite.setAttributes({
+                x: pos.x,
+                y: pos.y
+            }, true);
         }
 
         delete me.value;
+    },
+
+    getValuePosition: function (size, centerX, centerY) {
+        var bbox = this.chart.chartBBox;
+        switch (this.alignValue) {
+            case 'bc':
+                {
+                    return {
+                        x: centerX,
+                        y: centerY - size.height / 2
+                    };
+                }
+            case 'tl':
+                {
+                    return {
+                        x: bbox.x + size.width / 2,
+                        y: size.height / 2
+                    };
+                }
+            case 'tr':
+                {
+                    return {
+                        x: bbox.x + bbox.width - size.width / 2,
+                        y: size.height / 2
+                    };
+                }
+        }
     },
 
     getFontSizeByValue: function (value, innerR, r) {
@@ -250,6 +285,8 @@ Ext.define('Ext.ux.chart.series.GaugeThreshold', {
             minSize = 12,
             maxSize = 72,
             w, h, cosA, isBigger,
+            bbox = this.chart.chartBBox,
+            tgA, rw, rh,
             maxFound = false;
         if (!this.measureEl) {
             this.measureEl = Ext.create('Ext.Component', {
@@ -267,14 +304,31 @@ Ext.define('Ext.ux.chart.series.GaugeThreshold', {
         i = minSize + Math.floor((maxSize - minSize) / 2);
         // perform binary search for the maximum font size
         while (!maxFound) {
-            console.log(i, minSize, maxSize);
             el.setStyle('font-size', i + 'px');
             size = Ext.util.TextMetrics.measure(el, value);
             //calculate maxH based on estimated width
-            w = size.width / 2;
-            cosA = w / innerR;
-            h = Math.sqrt(1 - cosA * cosA) * innerR;
-            isBigger = (size.width > innerR * 2) || (size.height > h);
+            switch (this.alignValue) {
+                case 'bc':
+                    {
+                        w = size.width / 2;
+                        cosA = w / innerR;
+                        h = Math.sqrt(1 - cosA * cosA) * innerR;
+                        //check whether current size will fit the area
+                        isBigger = (size.width > innerR * 2) || (size.height > h);
+                        break;
+                    }
+                case 'tl':
+                case 'tr':
+                    {
+                        rw = bbox.width / 2;
+                        rh = bbox.height;
+                        hip = Math.sqrt(rh * rh + rw * rw) - r;                        
+                        //check whether current size will fit the area
+                        isBigger = (size.width * size.width + size.height * size.height) > (hip * hip);
+                        break;
+                    }
+            }
+
             if (isBigger) {
                 maxSize = i;
             }
@@ -282,7 +336,7 @@ Ext.define('Ext.ux.chart.series.GaugeThreshold', {
                 minSize = i;
             }
             i = minSize + Math.floor((maxSize - minSize) / 2);
-            maxFound = (maxSize - minSize) <= 1;            
+            maxFound = (maxSize - minSize) <= 1;
         }
         if (size) {
             return {
